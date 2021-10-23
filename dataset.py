@@ -298,7 +298,7 @@ def rotate_img(img, vertices, angle_range=10):
     return img, new_vertices
 
 
-def get_score_geo(img, vertices, labels, scale, length):
+def get_score_geo(img, vertices, labels, scale, length, to_tensor=True):
     '''generate score gt and geometry gt
     Input:
         img     : PIL Image
@@ -351,7 +351,13 @@ def get_score_geo(img, vertices, labels, scale, length):
 
     cv2.fillPoly(ignored_map, ignored_polys, 1)
     cv2.fillPoly(score_map, polys, 1)
-    return torch.Tensor(score_map).permute(2,0,1), torch.Tensor(geo_map).permute(2,0,1), torch.Tensor(ignored_map).permute(2,0,1)
+    
+    if to_tensor:
+        score_map = torch.Tensor(score_map).permute(2,0,1)
+        geo_map = torch.Tensor(geo_map).permute(2,0,1)
+        ignored_map = torch.Tensor(ignored_map).permute(2,0,1)
+    
+    return score_map, geo_map, ignored_map
 
 
 def extract_vertices(lines):
@@ -400,7 +406,8 @@ class custom_dataset(Dataset):
 
 
 class EASTDataset(Dataset):
-    def __init__(self, root_dir, split='train', scale=0.25, length=512):
+    def __init__(self, root_dir, split='train', scale=0.25, length=512, color_jitter=True,
+                 normalize=True, to_tensor=True):
         with open(osp.join(root_dir, 'ufo/{}.json'.format(split)), 'r') as f:
             anno = json.load(f)
 
@@ -408,8 +415,8 @@ class EASTDataset(Dataset):
         self.image_fnames = sorted(anno['images'].keys())
         self.image_dir = osp.join(root_dir, 'images')
 
-        self.scale = scale
-        self.length = length
+        self.scale, self.length = scale, length
+        self.color_jitter, self.to_tensor, self.normalize = color_jitter, to_tensor, normalize
 
     def __len__(self):
         return len(self.image_fnames)
@@ -428,10 +435,16 @@ class EASTDataset(Dataset):
         img, vertices = adjust_height(img, vertices)
         img, vertices = rotate_img(img, vertices)
         img, vertices = crop_img(img, vertices, labels, self.length)
-        transform = transforms.Compose(
-            [transforms.ColorJitter(0.5, 0.5, 0.5, 0.25), transforms.ToTensor(),
-             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
+        
+        funcs = []
+        if self.color_jitter:
+            funcs.append(transforms.ColorJitter(0.5, 0.5, 0.5, 0.25))
+        if self.to_tensor:
+            funcs.append(transforms.ToTensor())
+        if self.normalize:
+            funcs.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+        transform = transforms.Compose(funcs)
 
         score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.scale,
-                                                        self.length)
+                                                        self.length, to_tensor=self.to_tensor)
         return transform(img), score_map, geo_map, ignored_map
