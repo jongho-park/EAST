@@ -4,3 +4,4 @@ opencv-python==4.5.4.58
 shapely==1.7.1
 tqdm==4.62.3
 matplotlib
+albumentations==1.1.0
