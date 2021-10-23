@@ -351,12 +351,12 @@ def get_score_geo(img, vertices, labels, scale, length, to_tensor=True):
 
     cv2.fillPoly(ignored_map, ignored_polys, 1)
     cv2.fillPoly(score_map, polys, 1)
-    
+
     if to_tensor:
         score_map = torch.Tensor(score_map).permute(2,0,1)
         geo_map = torch.Tensor(geo_map).permute(2,0,1)
         ignored_map = torch.Tensor(ignored_map).permute(2,0,1)
-    
+
     return score_map, geo_map, ignored_map
 
 
@@ -375,34 +375,6 @@ def extract_vertices(lines):
         label = 0 if '###' in line else 1
         labels.append(label)
     return np.array(vertices), np.array(labels)
-
-
-class custom_dataset(Dataset):
-    def __init__(self, img_path, gt_path, scale=0.25, length=512):
-        super(custom_dataset, self).__init__()
-        self.img_files = [os.path.join(img_path, img_file) for img_file in sorted(os.listdir(img_path))]
-        self.gt_files = [os.path.join(gt_path, gt_file) for gt_file in sorted(os.listdir(gt_path))]
-        self.scale = scale
-        self.length = length
-
-    def __len__(self):
-        return len(self.img_files)
-
-    def __getitem__(self, index):
-        with open(self.gt_files[index], 'r') as f:
-            lines = f.readlines()
-        vertices, labels = extract_vertices(lines)
-
-        img = Image.open(self.img_files[index])
-        img, vertices = adjust_height(img, vertices)
-        img, vertices = rotate_img(img, vertices)
-        img, vertices = crop_img(img, vertices, labels, self.length)
-        transform = transforms.Compose([transforms.ColorJitter(0.5, 0.5, 0.5, 0.25), \
-                                        transforms.ToTensor(), \
-                                        transforms.Normalize(mean=(0.5,0.5,0.5),std=(0.5,0.5,0.5))])
-
-        score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.scale, self.length)
-        return transform(img), score_map, geo_map, ignored_map
 
 
 class EASTDataset(Dataset):
@@ -435,7 +407,7 @@ class EASTDataset(Dataset):
         img, vertices = adjust_height(img, vertices)
         img, vertices = rotate_img(img, vertices)
         img, vertices = crop_img(img, vertices, labels, self.length)
-        
+
         funcs = []
         if self.color_jitter:
             funcs.append(transforms.ColorJitter(0.5, 0.5, 0.5, 0.25))
