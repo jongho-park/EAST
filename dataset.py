@@ -1,12 +1,16 @@
-from shapely.geometry import Polygon
+import os
+import os.path as osp
+import math
+import json
+from PIL import Image
+
+import torch
 import numpy as np
 import cv2
-from PIL import Image
-import math
-import os
 import torch
 import torchvision.transforms as transforms
-from torch.utils import data
+from torch.utils.data import Dataset
+from shapely.geometry import Polygon
 
 
 def cal_distance(x1, y1, x2, y2):
@@ -367,11 +371,11 @@ def extract_vertices(lines):
     return np.array(vertices), np.array(labels)
 
 
-class custom_dataset(data.Dataset):
+class custom_dataset(Dataset):
     def __init__(self, img_path, gt_path, scale=0.25, length=512):
         super(custom_dataset, self).__init__()
         self.img_files = [os.path.join(img_path, img_file) for img_file in sorted(os.listdir(img_path))]
-        self.gt_files  = [os.path.join(gt_path, gt_file) for gt_file in sorted(os.listdir(gt_path))]
+        self.gt_files = [os.path.join(gt_path, gt_file) for gt_file in sorted(os.listdir(gt_path))]
         self.scale = scale
         self.length = length
 
@@ -392,4 +396,42 @@ class custom_dataset(data.Dataset):
                                         transforms.Normalize(mean=(0.5,0.5,0.5),std=(0.5,0.5,0.5))])
 
         score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.scale, self.length)
+        return transform(img), score_map, geo_map, ignored_map
+
+
+class EASTDataset(Dataset):
+    def __init__(self, root_dir, split='train', scale=0.25, length=512):
+        with open(osp.join(root_dir, 'ufo/{}.json'.format(split)), 'r') as f:
+            anno = json.load(f)
+
+        self.anno = anno
+        self.image_fnames = sorted(anno['images'].keys())
+        self.image_dir = osp.join(root_dir, 'images')
+
+        self.scale = scale
+        self.length = length
+
+    def __len__(self):
+        return len(self.image_fnames)
+
+    def __getitem__(self, idx):
+        image_fname = self.image_fnames[idx]
+        image_fpath = osp.join(self.image_dir, image_fname)
+
+        vertices, labels = [], []
+        for word_info in self.anno['images'][image_fname]['words'].values():
+            vertices.append(np.int32(word_info['points']).flatten())
+            labels.append(int(not word_info['illegibility']))
+        vertices, labels = np.array(vertices, dtype=np.int64), np.array(labels, dtype=np.int64)
+
+        img = Image.open(image_fpath)
+        img, vertices = adjust_height(img, vertices)
+        img, vertices = rotate_img(img, vertices)
+        img, vertices = crop_img(img, vertices, labels, self.length)
+        transform = transforms.Compose(
+            [transforms.ColorJitter(0.5, 0.5, 0.5, 0.25), transforms.ToTensor(),
+             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
+
+        score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.scale,
+                                                        self.length)
         return transform(img), score_map, geo_map, ignored_map
