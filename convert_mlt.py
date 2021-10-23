@@ -83,7 +83,7 @@ class MLT17Dataset(Dataset):
 
 
 def main():
-    dst_image_dir = osp.join(DST_DATASET_DIR, 'raw')
+    dst_image_dir = osp.join(DST_DATASET_DIR, 'images')
     # dst_image_dir = None
 
     mlt_train = MLT17Dataset(osp.join(SRC_DATASET_DIR, 'raw/ch8_training_images'),
