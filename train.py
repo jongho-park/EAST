@@ -57,7 +57,7 @@ def train(dataset_dir, pths_path, batch_size, lr, num_workers, epoch_iter, inter
 
 
 if __name__ == '__main__':
-    dataset_dir = '/data/datasets/ICDAR17_Korean'
+    dataset_dir = '/data/datasets/ICDAR17_KoreanLatin'
     pths_path = './pths'
     batch_size = 12
     lr = 1e-3
