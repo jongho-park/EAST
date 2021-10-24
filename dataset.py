@@ -1,4 +1,3 @@
-import os
 import os.path as osp
 import math
 import json
@@ -7,7 +6,6 @@ from PIL import Image
 import torch
 import numpy as np
 import cv2
-import torch
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 from shapely.geometry import Polygon
@@ -150,7 +148,7 @@ def find_min_rect_angle(vertices):
                     (max(y1, y2, y3, y4) - min(y1, y2, y3, y4))
         area_list.append(temp_area)
 
-    sorted_area_index = sorted(list(range(len(area_list))), key=lambda k : area_list[k])
+    sorted_area_index = sorted(list(range(len(area_list))), key=lambda k: area_list[k])
     min_error = float('inf')
     best_index = -1
     rank_num = 10
@@ -176,11 +174,11 @@ def is_cross_text(start_loc, length, vertices):
     if vertices.size == 0:
         return False
     start_w, start_h = start_loc
-    a = np.array([start_w, start_h, start_w + length, start_h, \
-          start_w + length, start_h + length, start_w, start_h + length]).reshape((4,2))
+    a = np.array([start_w, start_h, start_w + length, start_h, start_w + length, start_h + length,
+                  start_w, start_h + length]).reshape((4, 2))
     p1 = Polygon(a).convex_hull
     for vertice in vertices:
-        p2 = Polygon(vertice.reshape((4,2))).convex_hull
+        p2 = Polygon(vertice.reshape((4, 2))).convex_hull
         inter = p1.intersection(p2).area
         if 0.01 <= inter / p2.area <= 0.99:
             return True
@@ -257,6 +255,17 @@ def rotate_all_pixels(rotate_mat, anchor_x, anchor_y, length):
     return rotated_x, rotated_y
 
 
+def resize_img(img, vertices, size):
+    h, w = img.height, img.width
+    ratio = size / max(h, w)
+    if w > h:
+        img = img.resize((size, int(h * ratio)), Image.BILINEAR)
+    else:
+        img = img.resize((int(w * ratio), size), Image.BILINEAR)
+    new_vertices = vertices * ratio
+    return img, new_vertices
+
+
 def adjust_height(img, vertices, ratio=0.2):
     '''adjust height of image to aug data
     Input:
@@ -320,10 +329,10 @@ def get_score_geo(img, vertices, labels, scale, length, to_tensor=True):
 
     for i, vertice in enumerate(vertices):
         if labels[i] == 0:
-            ignored_polys.append(np.around(scale * vertice.reshape((4,2))).astype(np.int32))
+            ignored_polys.append(np.around(scale * vertice.reshape((4, 2))).astype(np.int32))
             continue
 
-        poly = np.around(scale * shrink_poly(vertice).reshape((4,2))).astype(np.int32) # scaled & shrinked
+        poly = np.around(scale * shrink_poly(vertice).reshape((4, 2))).astype(np.int32) # scaled & shrinked
         polys.append(poly)
         temp_mask = np.zeros(score_map.shape[:-1], np.float32)
         cv2.fillPoly(temp_mask, [poly], 1)
@@ -360,26 +369,25 @@ def get_score_geo(img, vertices, labels, scale, length, to_tensor=True):
     return score_map, geo_map, ignored_map
 
 
-def extract_vertices(lines):
-    '''extract vertices info from txt lines
-    Input:
-        lines   : list of string info
-    Output:
-        vertices: vertices of text regions <numpy.ndarray, (n,8)>
-        labels  : 1->valid, 0->ignore, <numpy.ndarray, (n,)>
-    '''
-    labels = []
-    vertices = []
-    for line in lines:
-        vertices.append(list(map(int,line.rstrip('\n').lstrip('\ufeff').split(',')[:8])))
-        label = 0 if '###' in line else 1
-        labels.append(label)
-    return np.array(vertices), np.array(labels)
+def filter_vertices(vertices, labels, ignore_under=0, drop_under=0):
+    if drop_under == 0 and ignore_under == 0:
+        return vertices, labels
+
+    new_vertices, new_labels = vertices.copy(), labels.copy()
+
+    areas = np.array([Polygon(v.reshape((4, 2))).convex_hull.area for v in vertices])
+    labels[areas < ignore_under] = 0
+
+    if drop_under > 0:
+        passed = areas >= drop_under
+        new_vertices, new_labels = new_vertices[passed], new_labels[passed]
+
+    return new_vertices, new_labels
 
 
 class EASTDataset(Dataset):
-    def __init__(self, root_dir, split='train', scale=0.25, length=512, color_jitter=True,
-                 normalize=True, to_tensor=True):
+    def __init__(self, root_dir, split='train', map_scale=0.25, image_size=1024, crop_size=512,
+                 color_jitter=True, normalize=True, to_tensor=True):
         with open(osp.join(root_dir, 'ufo/{}.json'.format(split)), 'r') as f:
             anno = json.load(f)
 
@@ -387,7 +395,7 @@ class EASTDataset(Dataset):
         self.image_fnames = sorted(anno['images'].keys())
         self.image_dir = osp.join(root_dir, 'images')
 
-        self.scale, self.length = scale, length
+        self.map_scale, self.image_size, self.crop_size = map_scale, image_size, crop_size
         self.color_jitter, self.to_tensor, self.normalize = color_jitter, to_tensor, normalize
 
     def __len__(self):
@@ -399,14 +407,20 @@ class EASTDataset(Dataset):
 
         vertices, labels = [], []
         for word_info in self.anno['images'][image_fname]['words'].values():
-            vertices.append(np.int32(word_info['points']).flatten())
+            vertices.append(np.array(word_info['points']).flatten())
             labels.append(int(not word_info['illegibility']))
         vertices, labels = np.array(vertices, dtype=np.int64), np.array(labels, dtype=np.int64)
 
+        vertices, labels = filter_vertices(vertices, labels, ignore_under=10, drop_under=1)
+
         img = Image.open(image_fpath)
+        img, vertices = resize_img(img, vertices, self.image_size)
         img, vertices = adjust_height(img, vertices)
         img, vertices = rotate_img(img, vertices)
-        img, vertices = crop_img(img, vertices, labels, self.length)
+        img, vertices = crop_img(img, vertices, labels, self.crop_size)
+
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
 
         funcs = []
         if self.color_jitter:
@@ -417,6 +431,8 @@ class EASTDataset(Dataset):
             funcs.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
         transform = transforms.Compose(funcs)
 
-        score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.scale,
-                                                        self.length, to_tensor=self.to_tensor)
-        return transform(img), score_map, geo_map, ignored_map
+        score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.map_scale,
+                                                        self.crop_size, to_tensor=self.to_tensor)
+        img = transform(img)
+
+        return img, score_map, geo_map, ignored_map
