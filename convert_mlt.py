@@ -66,6 +66,12 @@ class MLT17Dataset(Dataset):
         return image_fname, dict(img_h=img_h, img_w=img_w, words=sample_info['words_info'])
 
     def parse_label_file(self, label_path):
+        def rearrange_points(points):
+            start_idx = np.argmin([np.linalg.norm(p, ord=1) for p in points])
+            if start_idx != 0:
+                points = np.roll(points, -start_idx, axis=0).tolist()
+            return points
+
         with open(label_path, encoding='utf-8') as f:
             lines = f.readlines()
 
@@ -74,6 +80,7 @@ class MLT17Dataset(Dataset):
             items = line.strip().split(',', 9)
             language, transcription = items[8], items[9]
             points = np.array(items[:8], dtype=np.float32).reshape(4, 2).tolist()
+            points = rearrange_points(points)
 
             words_info[word_idx] = dict(points=points, transcription=transcription,
                                         language=language, illegibility=transcription == '###')
