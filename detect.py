@@ -1,35 +1,13 @@
-import torch
-from torchvision import transforms
-from PIL import Image, ImageDraw
-from model import EAST
-import os
-from dataset import get_rotate_mat
+from PIL import Image
+
 import numpy as np
+import torch
 import lanms
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from albumentations.augmentations.geometric.resize import LongestMaxSize
 
-
-def resize_img(img):
-    '''resize image to be divisible by 32
-    '''
-    w, h = img.size
-    resize_w = w
-    resize_h = h
-
-    resize_h = resize_h if resize_h % 32 == 0 else int(resize_h / 32) * 32
-    resize_w = resize_w if resize_w % 32 == 0 else int(resize_w / 32) * 32
-    img = img.resize((resize_w, resize_h), Image.BILINEAR)
-    ratio_h = resize_h / h
-    ratio_w = resize_w / w
-
-    return img, ratio_h, ratio_w
-
-
-def load_pil(img):
-    '''convert PIL Image to torch.Tensor
-    '''
-    t = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=(0.5, 0.5, 0.5),
-                                                                        std=(0.5,0.5,0.5))])
-    return t(img).unsqueeze(0)
+from dataset import get_rotate_mat
 
 
 def is_valid_poly(res, score_shape, scale):
@@ -87,7 +65,7 @@ def restore_polys(valid_pos, valid_geo, score_shape, scale=4):
     return np.array(polys), index
 
 
-def get_boxes(score, geo, score_thresh=0.9, nms_thresh=0.2):
+def get_bboxes(score, geo, score_thresh=0.9, nms_thresh=0.2):
     '''get boxes from feature map
     Input:
         score       : score map from model <numpy.ndarray, (1,row,col)>
@@ -116,81 +94,38 @@ def get_boxes(score, geo, score_thresh=0.9, nms_thresh=0.2):
     return boxes
 
 
-def adjust_ratio(boxes, ratio_w, ratio_h):
-    '''refine boxes
-    Input:
-        boxes  : detected polys <numpy.ndarray, (n,9)>
-        ratio_w: ratio of width
-        ratio_h: ratio of height
-    Output:
-        refined boxes
-    '''
-    if boxes is None or boxes.size == 0:
-        return None
-    boxes[:,[0,2,4,6]] /= ratio_w
-    boxes[:,[1,3,5,7]] /= ratio_h
-    return np.around(boxes)
+def detect(model, images, input_size):
+    prep_fn = A.Compose([
+        LongestMaxSize(input_size), A.PadIfNeeded(min_height=input_size, min_width=input_size,
+                                                  position=A.PadIfNeeded.PositionType.TOP_LEFT),
+        A.Normalize(), ToTensorV2()])
+    device = list(model.parameters())[0].device
 
+    batch, orig_sizes = [], []
+    for image in images:
+        orig_sizes.append(image.shape[:2])
+        batch.append(prep_fn(image=image)['image'])
+    batch = torch.stack(batch, dim=0).to(device)
 
-def detect(img, model, device):
-    '''detect text regions of img using model
-    Input:
-        img   : PIL Image
-        model : detection model
-        device: gpu if gpu is available
-    Output:
-        detected polys
-    '''
-    img, ratio_h, ratio_w = resize_img(img)
     with torch.no_grad():
-        score, geo = model(load_pil(img).to(device))
-    boxes = get_boxes(score.squeeze(0).cpu().numpy(), geo.squeeze(0).cpu().numpy())
-    return adjust_ratio(boxes, ratio_w, ratio_h)
+        score_maps, geo_maps = model(batch)
+    score_maps, geo_maps = score_maps.cpu().numpy(), geo_maps.cpu().numpy()
 
+    by_sample_bboxes = []
+    for score_map, geo_map, orig_size in zip(score_maps, geo_maps, orig_sizes):
+        map_margin = int(abs(orig_size[0] - orig_size[1]) * 0.25 * input_size / max(orig_size))
+        if orig_size[0] > orig_size[1]:
+            score_map, geo_map = score_map[:, :, :-map_margin], geo_map[:, :, :-map_margin]
+        else:
+            score_map, geo_map = score_map[:, :-map_margin, :], geo_map[:, :-map_margin, :]
 
-def plot_boxes(img, boxes):
-    '''plot boxes on image
-    '''
-    if boxes is None:
-        return img
+        bboxes = get_bboxes(score_map, geo_map)
+        if bboxes is None:
+            bboxes = np.zeros((0, 4, 2), dtype=np.float32)
+        else:
+            bboxes = bboxes[:, :8].reshape(-1, 4, 2)
+            bboxes *= max(orig_size) / input_size
 
-    draw = ImageDraw.Draw(img)
-    for box in boxes:
-        draw.polygon([box[0], box[1], box[2], box[3], box[4], box[5], box[6], box[7]], outline=(0,255,0))
-    return img
+        by_sample_bboxes.append(bboxes)
 
-
-def detect_dataset(model, device, test_img_path, submit_path):
-    '''detection on whole dataset, save .txt results in submit_path
-    Input:
-        model        : detection model
-        device       : gpu if gpu is available
-        test_img_path: dataset path
-        submit_path  : submit result for evaluation
-    '''
-    img_files = os.listdir(test_img_path)
-    img_files = sorted([os.path.join(test_img_path, img_file) for img_file in img_files])
-
-    for i, img_file in enumerate(img_files):
-        print('evaluating {} image'.format(i), end='\r')
-        boxes = detect(Image.open(img_file), model, device)
-        seq = []
-        if boxes is not None:
-            seq.extend([','.join([str(int(b)) for b in box[:-1]]) + '\n' for box in boxes])
-        with open(os.path.join(submit_path, 'res_' + os.path.basename(img_file).replace('.jpg','.txt')), 'w') as f:
-            f.writelines(seq)
-
-
-if __name__ == '__main__':
-    img_path    = '../ICDAR_2015/test_img/img_2.jpg'
-    model_path  = './pths/east_vgg16.pth'
-    res_img     = './res.bmp'
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = EAST().to(device)
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
-    img = Image.open(img_path)
-
-    boxes = detect(img, model, device)
-    plot_img = plot_boxes(img, boxes)
-    plot_img.save(res_img)
+    return by_sample_bboxes
