@@ -82,12 +82,15 @@ def main(args):
         ckpt_name = osp.splitext(osp.basename(ckpt_fpath))[0]
         print('Inference in progress ({} | {} / {})'.format(ckpt_name, idx + 1, len(ckpt_fnames)))
 
+        ufo_result = dict(images=dict())
         for split in ['public', 'private']:
             print('Split: {}'.format(split))
-            ufo_result = do_inference(model, ckpt_fpath, args.data_dir, args.input_size,
-                                      args.batch_size, split=split)
-            with open(osp.join(args.output_dir, '{}_{}.json'.format(ckpt_name, split)), 'w') as f:
-                json.dump(ufo_result, f, indent=4)
+            split_result = do_inference(model, ckpt_fpath, args.data_dir, args.input_size,
+                                        args.batch_size, split=split)
+            ufo_result['images'].update(split_result['images'])
+
+        with open(osp.join(args.output_dir, '{}.json'.format(ckpt_name)), 'w') as f:
+            json.dump(ufo_result, f, indent=4)
 
 
 if __name__ == '__main__':
