@@ -18,7 +18,8 @@ def parse_args():
 
     # Conventional args
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR'))
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR',
+                                                                        'trained_models'))
 
     parser.add_argument('--device', default='cuda' if cuda.is_available() else 'cpu')
     parser.add_argument('--num_workers', type=int, default=4)
@@ -80,7 +81,7 @@ def do_training(data_dir, model_dir, device, image_size, input_size, num_workers
         print('=' * 50)
 
         if (epoch + 1) % save_interval == 0:
-            ckpt_fpath = osp.join(model_dir, 'model_epoch_{}.pth'.format(epoch + 1))
+            ckpt_fpath = osp.join(model_dir, 'model_latest.pth')
             torch.save(model.state_dict(), ckpt_fpath)
 
 
