@@ -1,8 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
-import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
-import math
 
 
 cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
@@ -132,6 +132,7 @@ class merge(nn.Module):
 
         y = self.relu7(self.bn7(self.conv7(y)))
         return y
+
 
 class output(nn.Module):
     def __init__(self, scope=512):

@@ -1,5 +1,3 @@
-from PIL import Image
-
 import numpy as np
 import torch
 import lanms
@@ -21,10 +19,10 @@ def is_valid_poly(res, score_shape, scale):
     '''
     cnt = 0
     for i in range(res.shape[1]):
-        if res[0,i] < 0 or res[0,i] >= score_shape[1] * scale or \
-           res[1,i] < 0 or res[1,i] >= score_shape[0] * scale:
+        if (res[0, i] < 0 or res[0, i] >= score_shape[1] * scale or res[1, i] < 0 or
+            res[1, i] >= score_shape[0] * scale):
             cnt += 1
-    return True if cnt <= 1 else False
+    return cnt <= 1
 
 
 def restore_polys(valid_pos, valid_geo, score_shape, scale=4):
@@ -56,12 +54,13 @@ def restore_polys(valid_pos, valid_geo, score_shape, scale=4):
         temp_y = np.array([[y_min, y_min, y_max, y_max]]) - y
         coordidates = np.concatenate((temp_x, temp_y), axis=0)
         res = np.dot(rotate_mat, coordidates)
-        res[0,:] += x
-        res[1,:] += y
+        res[0, :] += x
+        res[1, :] += y
 
         if is_valid_poly(res, score_shape, scale):
             index.append(i)
-            polys.append([res[0,0], res[1,0], res[0,1], res[1,1], res[0,2], res[1,2],res[0,3], res[1,3]])
+            polys.append([res[0, 0], res[1, 0], res[0, 1], res[1, 1], res[0, 2], res[1, 2],
+                          res[0, 3], res[1, 3]])
     return np.array(polys), index
 
 
@@ -75,14 +74,14 @@ def get_bboxes(score, geo, score_thresh=0.9, nms_thresh=0.2):
     Output:
         boxes       : final polys <numpy.ndarray, (n,9)>
     '''
-    score = score[0,:,:]
+    score = score[0, :, :]
     xy_text = np.argwhere(score > score_thresh) # n x 2, format is [r, c]
     if xy_text.size == 0:
         return None
 
     xy_text = xy_text[np.argsort(xy_text[:, 0])]
-    valid_pos = xy_text[:, ::-1].copy() # n x 2, [x, y]
-    valid_geo = geo[:, xy_text[:, 0], xy_text[:, 1]] # 5 x n
+    valid_pos = xy_text[:, ::-1].copy()  # n x 2, [x, y]
+    valid_geo = geo[:, xy_text[:, 0], xy_text[:, 1]]  # 5 x n
     polys_restored, index = restore_polys(valid_pos, valid_geo, score.shape)
     if polys_restored.size == 0:
         return None
