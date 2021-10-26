@@ -34,7 +34,7 @@ def parse_args():
     if args.input_size % 32 != 0:
         raise ValueError('`input_size` must be a multiple of 32')
 
-    return parser.parse_args()
+    return args
 
 
 def do_inference(model, ckpt_fpath, data_dir, input_size, batch_size, split='public'):

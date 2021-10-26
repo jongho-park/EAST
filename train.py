@@ -35,7 +35,7 @@ def parse_args():
     if args.input_size % 32 != 0:
         raise ValueError('`input_size` must be a multiple of 32')
 
-    return parser.parse_args()
+    return args
 
 
 def do_training(data_dir, model_dir, device, image_size, input_size, num_workers, batch_size,
