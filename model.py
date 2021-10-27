@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from loss import EASTLoss
+
 
 cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
 
@@ -59,9 +61,9 @@ class VGG(nn.Module):
         return x
 
 
-class extractor(nn.Module):
+class Extractor(nn.Module):
     def __init__(self, pretrained):
-        super(extractor, self).__init__()
+        super().__init__()
         vgg16_bn = VGG(make_layers(cfg, batch_norm=True))
         if pretrained:
             vgg16_bn.load_state_dict(torch.load('./pths/vgg16_bn-6c64b313.pth'))
@@ -76,9 +78,9 @@ class extractor(nn.Module):
         return out[1:]
 
 
-class merge(nn.Module):
+class Merge(nn.Module):
     def __init__(self):
-        super(merge, self).__init__()
+        super().__init__()
 
         self.conv1 = nn.Conv2d(1024, 128, 1)
         self.bn1 = nn.BatchNorm2d(128)
@@ -134,9 +136,9 @@ class merge(nn.Module):
         return y
 
 
-class output(nn.Module):
+class Output(nn.Module):
     def __init__(self, scope=512):
-        super(output, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(32, 1, 1)
         self.sigmoid1 = nn.Sigmoid()
         self.conv2 = nn.Conv2d(32, 4, 1)
@@ -161,12 +163,26 @@ class output(nn.Module):
 class EAST(nn.Module):
     def __init__(self, pretrained=True):
         super(EAST, self).__init__()
-        self.extractor = extractor(pretrained)
-        self.merge     = merge()
-        self.output    = output()
+        self.extractor = Extractor(pretrained)
+        self.merge = Merge()
+        self.output = Output()
+
+        self.criterion = EASTLoss()
 
     def forward(self, x):
         return self.output(self.merge(self.extractor(x)))
+
+    def train_step(self, image, score_map, geo_map, ignored_map):
+        device = list(self.parameters())[0].device
+        image, score_map, geo_map, ignored_map = (image.to(device), score_map.to(device),
+                                                  geo_map.to(device), ignored_map.to(device))
+        pred_score_map, pred_geo_map = self.forward(image)
+
+        loss, values_dict = self.criterion(score_map, pred_score_map, geo_map, pred_geo_map,
+                                           ignored_map)
+        extra_info = dict(**values_dict, score_map=pred_score_map, geo_map=pred_geo_map)
+
+        return loss, extra_info
 
 
 if __name__ == '__main__':
