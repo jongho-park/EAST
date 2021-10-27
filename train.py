@@ -80,7 +80,11 @@ def do_training(data_dir, model_dir, device, image_size, input_size, num_workers
         print(time.asctime(time.localtime(time.time())))
         print('=' * 50)
 
+
         if (epoch + 1) % save_interval == 0:
+            if not osp.exists(model_dir):
+                os.makedirs(model_dir)
+
             ckpt_fpath = osp.join(model_dir, 'model_latest.pth')
             torch.save(model.state_dict(), ckpt_fpath)
 
