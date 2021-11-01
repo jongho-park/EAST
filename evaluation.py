@@ -55,8 +55,6 @@ def evaluation(gt_path, pred_path):
     pred_bboxes = ufo_to_rrc_format(pred_ufo)
     pred_bboxes = {x: pred_bboxes[x] for x in gt_bboxes}
 
-    print(len(gt_bboxes), len(pred_bboxes))
-
     eval_result = calc_deteval_metrics(pred_bboxes, gt_bboxes, transcriptions)
 
     result_dict = dict(
