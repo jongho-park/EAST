@@ -1,11 +1,8 @@
 import json
-import os
 import os.path as osp
 from argparse import ArgumentParser
 from glob import glob
 from pprint import pprint
-
-import numpy as np
 
 from deteval import calc_deteval_metrics
 
@@ -13,16 +10,20 @@ from deteval import calc_deteval_metrics
 def parse_args():
     parser = ArgumentParser()
 
-    parser.add_argument('--gt_dir', default='/nas/ocr/datasets/BoostCamp')
-    parser.add_argument('--pred_dir', default='predictions')
-    parser.add_argument('--output_dir', default='scores')
+    parser.add_argument('--gt_path', default='/nas/ocr/datasets/BoostCamp/public_ufo.json')
+    parser.add_argument('--pred_path', default='./predictions/model_epoch_100.json')
 
     args = parser.parse_args()
 
     return args
 
 
-def do_evaluation(pred_ufo, public_gt_ufo, private_gt_ufo):
+def evaluation(gt_path, pred_path):
+    """
+    Args:
+        gt_path (string) : Ground truth file path
+        pred_path (string) : Prediction file path (output of inference.py)
+    """
     def ufo_to_rrc_format(ufo, get_transcriptions=False):
         bboxes_dict, transcriptions_dict = dict(), dict()
         for image_fname in ufo['images']:
@@ -45,57 +46,43 @@ def do_evaluation(pred_ufo, public_gt_ufo, private_gt_ufo):
         else:
             return bboxes_dict
 
+    with open(gt_path, 'r') as f:
+        gt_ufo = json.load(f)
+    gt_bboxes, transcriptions = ufo_to_rrc_format(gt_ufo, get_transcriptions=True)
+
+    with open(pred_path, 'r') as f:
+        pred_ufo = json.load(f)
     pred_bboxes = ufo_to_rrc_format(pred_ufo)
-    pub_gt_bboxes, pub_transcriptions = ufo_to_rrc_format(public_gt_ufo, get_transcriptions=True)
-    pri_gt_bboxes, pri_transcriptions = ufo_to_rrc_format(private_gt_ufo, get_transcriptions=True)
+    pred_bboxes = {x: pred_bboxes[x] for x in gt_bboxes}
 
-    result_dict = dict()
+    print(len(gt_bboxes), len(pred_bboxes))
 
-    pub_pred_bboxes = {x: pred_bboxes[x] for x in pub_gt_bboxes}
-    public_result = calc_deteval_metrics(pub_pred_bboxes, pub_gt_bboxes, pub_transcriptions)
-    result_dict['public'] = dict(fscore=public_result['total']['hmean'],
-                                 recall=public_result['total']['recall'],
-                                 precision=public_result['total']['precision'])
+    eval_result = calc_deteval_metrics(pred_bboxes, gt_bboxes, transcriptions)
 
-    pri_pred_bboxes = {x: pred_bboxes[x] for x in pri_gt_bboxes}
-    private_result = calc_deteval_metrics(pri_pred_bboxes, pri_gt_bboxes, pri_transcriptions)
-    result_dict['private'] = dict(fscore=private_result['total']['hmean'],
-                                  recall=private_result['total']['recall'],
-                                  precision=private_result['total']['precision'])
+    result_dict = dict(
+        f1=dict(
+            value=eval_result['total']['hmean'],
+            rank=True,
+            decs=True,
+        ),
+        recall=dict(
+            value=eval_result['total']['recall'],
+            rank=False,
+            decs=True,
+        ),
+        precision=dict(
+            value=eval_result['total']['precision'],
+            rank=False,
+            decs=True,
+        ),
+    )
 
-    gt_bboxes = dict(**pub_gt_bboxes, **pri_gt_bboxes)
-    transcriptions = dict(**pub_transcriptions, **pri_transcriptions)
-    final_result = calc_deteval_metrics(pred_bboxes, gt_bboxes, transcriptions)
-    result_dict['final'] = dict(fscore=final_result['total']['hmean'],
-                                recall=final_result['total']['recall'],
-                                precision=final_result['total']['precision'])
-
-    return result_dict
+    return json.dumps(result_dict)
 
 
 def main(args):
-    with open(osp.join(args.gt_dir, 'public_ufo.json'), 'r') as f:
-        public_gt_ufo = json.load(f)
-    with open(osp.join(args.gt_dir, 'private_ufo.json'), 'r') as f:
-        private_gt_ufo = json.load(f)
-
-    if not osp.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    pred_fpaths = glob(osp.join(args.pred_dir, '*.json'))
-
-    for pred_fpath in pred_fpaths:
-        pred_name = osp.splitext(osp.basename(pred_fpath))[0]
-        print('Evaluation in progress ({})'.format(pred_name))
-
-        with open(pred_fpath, 'r') as f:
-            pred_ufo = json.load(f)
-
-        result = do_evaluation(pred_ufo, public_gt_ufo, private_gt_ufo)
-        pprint(result)
-
-        with open(osp.join(args.output_dir, '{}.json'.format(pred_name)), 'w') as f:
-            json.dump(result, f, indent=4)
+    result = evaluation(args.gt_path, args.pred_path)
+    pprint(result)
 
 
 if __name__ == '__main__':
