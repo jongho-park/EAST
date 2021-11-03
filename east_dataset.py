@@ -138,8 +138,11 @@ class EASTDataset(Dataset):
 
         mask_size = int(image.shape[0] * self.map_scale), int(image.shape[1] * self.map_scale)
         roi_mask = cv2.resize(roi_mask, dsize=mask_size)
+        if roi_mask.ndim == 2:
+            roi_mask = np.expand_dims(roi_mask, axis=2)
 
         if self.to_tensor:
+            image = torch.Tensor(image).permute(2, 0, 1)
             score_map = torch.Tensor(score_map).permute(2, 0, 1)
             geo_map = torch.Tensor(geo_map).permute(2, 0, 1)
             roi_mask = torch.Tensor(roi_mask).permute(2, 0, 1)
