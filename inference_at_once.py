@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument('--device', default='cuda' if cuda.is_available() else 'cpu')
     parser.add_argument('--input_size', type=int, default=1024)
     parser.add_argument('--batch_size', type=int, default=20)
+    parser.add_argument('--of_n_take_ith', type=int, nargs=2, default=[1, 1])
 
     args = parser.parse_args()
 
@@ -67,23 +68,29 @@ def main(args):
     model = EAST(pretrained=False).to(args.device)
 
     # Get paths to checkpoint files
-    ckpt_fpath = osp.join(args.model_dir, 'latest.pth')
+    ckpt_fnames = sorted([x for x in os.listdir(args.model_dir) if osp.splitext(x)[1] in
+                          CHECKPOINT_EXTENSIONS])
+    ckpt_fpaths = [osp.join(args.model_dir, x) for x in ckpt_fnames]
 
     if not osp.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    print('Inference in progress')
+    for idx, ckpt_fpath in enumerate(ckpt_fpaths):
+        if idx % args.of_n_take_ith[0] != args.of_n_take_ith[1] - 1:
+            continue
 
-    ufo_result = dict(images=dict())
-    for split in ['public', 'private']:
-        print('Split: {}'.format(split))
-        split_result = do_inference(model, ckpt_fpath, args.data_dir, args.input_size,
-                                    args.batch_size, split=split)
-        ufo_result['images'].update(split_result['images'])
+        ckpt_name = osp.splitext(osp.basename(ckpt_fpath))[0]
+        print('Inference in progress ({} | {} / {})'.format(ckpt_name, idx + 1, len(ckpt_fnames)))
 
-    output_fname = 'output.csv'
-    with open(osp.join(args.output_dir, output_fname), 'w') as f:
-        json.dump(ufo_result, f, indent=4)
+        ufo_result = dict(images=dict())
+        for split in ['public', 'private']:
+            print('Split: {}'.format(split))
+            split_result = do_inference(model, ckpt_fpath, args.data_dir, args.input_size,
+                                        args.batch_size, split=split)
+            ufo_result['images'].update(split_result['images'])
+
+        with open(osp.join(args.output_dir, '{}.json'.format(ckpt_name)), 'w') as f:
+            json.dump(ufo_result, f, indent=4)
 
 
 if __name__ == '__main__':
