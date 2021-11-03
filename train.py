@@ -11,7 +11,8 @@ from torch.utils.data import DataLoader
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-from dataset import EASTDataset
+from east_dataset import EASTDataset
+from dataset import SceneTextDataset
 from model import EAST
 
 
@@ -43,7 +44,8 @@ def parse_args():
 
 def do_training(data_dir, model_dir, device, image_size, input_size, num_workers, batch_size,
                 learning_rate, max_epoch, save_interval):
-    dataset = EASTDataset(data_dir, split='train', image_size=image_size, crop_size=input_size)
+    dataset = SceneTextDataset(data_dir, split='train', image_size=image_size, crop_size=input_size)
+    dataset = EASTDataset(dataset)
     num_batches = math.ceil(len(dataset) / batch_size)
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
@@ -57,10 +59,10 @@ def do_training(data_dir, model_dir, device, image_size, input_size, num_workers
     for epoch in range(max_epoch):
         epoch_loss, epoch_start = 0, time.time()
         with tqdm(total=num_batches) as pbar:
-            for batch_idx, (img, gt_score, gt_geo, ignored_map) in enumerate(train_loader):
+            for img, gt_score_map, gt_geo_map, roi_mask in train_loader:
                 pbar.set_description('[Epoch {}]'.format(epoch + 1))
 
-                loss, extra_info = model.train_step(img, gt_score, gt_geo, ignored_map)
+                loss, extra_info = model.train_step(img, gt_score_map, gt_geo_map, roi_mask)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

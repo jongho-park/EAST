@@ -6,7 +6,7 @@ from PIL import Image
 import torch
 import numpy as np
 import cv2
-import torchvision.transforms as transforms
+import albumentations as A
 from torch.utils.data import Dataset
 from shapely.geometry import Polygon
 
@@ -307,66 +307,14 @@ def rotate_img(img, vertices, angle_range=10):
     return img, new_vertices
 
 
-def get_score_geo(img, vertices, labels, scale, length, to_tensor=True):
-    '''generate score gt and geometry gt
-    Input:
-        img     : PIL Image
-        vertices: vertices of text regions <numpy.ndarray, (n,8)>
-        labels  : 1->valid, 0->ignore, <numpy.ndarray, (n,)>
-        scale   : feature map / image
-        length  : image length
-    Output:
-        score gt, geo gt, ignored
-    '''
-    score_map   = np.zeros((int(img.height * scale), int(img.width * scale), 1), np.float32)
-    geo_map     = np.zeros((int(img.height * scale), int(img.width * scale), 5), np.float32)
-    ignored_map = np.zeros((int(img.height * scale), int(img.width * scale), 1), np.float32)
-
-    index = np.arange(0, length, int(1/scale))
-    index_x, index_y = np.meshgrid(index, index)
+def generate_roi_mask(image, vertices, labels):
+    mask = np.ones(image.shape[:2], dtype=np.float32)
     ignored_polys = []
-    polys = []
-
-    for i, vertice in enumerate(vertices):
-        if labels[i] == 0:
-            ignored_polys.append(np.around(scale * vertice.reshape((4, 2))).astype(np.int32))
-            continue
-
-        poly = np.around(scale * shrink_poly(vertice).reshape((4, 2))).astype(np.int32) # scaled & shrinked
-        polys.append(poly)
-        temp_mask = np.zeros(score_map.shape[:-1], np.float32)
-        cv2.fillPoly(temp_mask, [poly], 1)
-
-        theta = find_min_rect_angle(vertice)
-        rotate_mat = get_rotate_mat(theta)
-
-        rotated_vertices = rotate_vertices(vertice, theta)
-        x_min, x_max, y_min, y_max = get_boundary(rotated_vertices)
-        rotated_x, rotated_y = rotate_all_pixels(rotate_mat, vertice[0], vertice[1], length)
-
-        d1 = rotated_y - y_min
-        d1[d1<0] = 0
-        d2 = y_max - rotated_y
-        d2[d2<0] = 0
-        d3 = rotated_x - x_min
-        d3[d3<0] = 0
-        d4 = x_max - rotated_x
-        d4[d4<0] = 0
-        geo_map[:,:,0] += d1[index_y, index_x] * temp_mask
-        geo_map[:,:,1] += d2[index_y, index_x] * temp_mask
-        geo_map[:,:,2] += d3[index_y, index_x] * temp_mask
-        geo_map[:,:,3] += d4[index_y, index_x] * temp_mask
-        geo_map[:,:,4] += theta * temp_mask
-
-    cv2.fillPoly(ignored_map, ignored_polys, 1)
-    cv2.fillPoly(score_map, polys, 1)
-
-    if to_tensor:
-        score_map = torch.Tensor(score_map).permute(2,0,1)
-        geo_map = torch.Tensor(geo_map).permute(2,0,1)
-        ignored_map = torch.Tensor(ignored_map).permute(2,0,1)
-
-    return score_map, geo_map, ignored_map
+    for vertice, label in zip(vertices, labels):
+        if label == 0:
+            ignored_polys.append(np.around(vertice.reshape((4, 2))).astype(np.int32))
+    cv2.fillPoly(mask, ignored_polys, 0)
+    return mask
 
 
 def filter_vertices(vertices, labels, ignore_under=0, drop_under=0):
@@ -385,9 +333,9 @@ def filter_vertices(vertices, labels, ignore_under=0, drop_under=0):
     return new_vertices, new_labels
 
 
-class EASTDataset(Dataset):
-    def __init__(self, root_dir, split='train', map_scale=0.25, image_size=1024, crop_size=512,
-                 color_jitter=True, normalize=True, to_tensor=True):
+class SceneTextDataset(Dataset):
+    def __init__(self, root_dir, split='train', image_size=1024, crop_size=512, color_jitter=True,
+                 normalize=True):
         with open(osp.join(root_dir, 'ufo/{}.json'.format(split)), 'r') as f:
             anno = json.load(f)
 
@@ -395,8 +343,8 @@ class EASTDataset(Dataset):
         self.image_fnames = sorted(anno['images'].keys())
         self.image_dir = osp.join(root_dir, 'images')
 
-        self.map_scale, self.image_size, self.crop_size = map_scale, image_size, crop_size
-        self.color_jitter, self.to_tensor, self.normalize = color_jitter, to_tensor, normalize
+        self.image_size, self.crop_size = image_size, crop_size
+        self.color_jitter, self.normalize = color_jitter, normalize
 
     def __len__(self):
         return len(self.image_fnames)
@@ -409,30 +357,29 @@ class EASTDataset(Dataset):
         for word_info in self.anno['images'][image_fname]['words'].values():
             vertices.append(np.array(word_info['points']).flatten())
             labels.append(int(not word_info['illegibility']))
-        vertices, labels = np.array(vertices, dtype=np.int64), np.array(labels, dtype=np.int64)
+        vertices, labels = np.array(vertices, dtype=np.float32), np.array(labels, dtype=np.int64)
 
         vertices, labels = filter_vertices(vertices, labels, ignore_under=10, drop_under=1)
 
-        img = Image.open(image_fpath)
-        img, vertices = resize_img(img, vertices, self.image_size)
-        img, vertices = adjust_height(img, vertices)
-        img, vertices = rotate_img(img, vertices)
-        img, vertices = crop_img(img, vertices, labels, self.crop_size)
+        image = Image.open(image_fpath)
+        image, vertices = resize_img(image, vertices, self.image_size)
+        image, vertices = adjust_height(image, vertices)
+        image, vertices = rotate_img(image, vertices)
+        image, vertices = crop_img(image, vertices, labels, self.crop_size)
 
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        image = np.array(image)
 
         funcs = []
         if self.color_jitter:
-            funcs.append(transforms.ColorJitter(0.5, 0.5, 0.5, 0.25))
-        if self.to_tensor:
-            funcs.append(transforms.ToTensor())
+            funcs.append(A.ColorJitter(0.5, 0.5, 0.5, 0.25))
         if self.normalize:
-            funcs.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
-        transform = transforms.Compose(funcs)
+            funcs.append(A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+        transform = A.Compose(funcs)
 
-        score_map, geo_map, ignored_map = get_score_geo(img, vertices, labels, self.map_scale,
-                                                        self.crop_size, to_tensor=self.to_tensor)
-        img = transform(img)
+        image = transform(image=image)['image']
+        word_bboxes = np.reshape(vertices, (-1, 4, 2))
+        roi_mask = generate_roi_mask(image, vertices, labels)
 
-        return img, score_map, geo_map, ignored_map
+        return image, word_bboxes, roi_mask

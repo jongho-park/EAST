@@ -172,14 +172,14 @@ class EAST(nn.Module):
     def forward(self, x):
         return self.output(self.merge(self.extractor(x)))
 
-    def train_step(self, image, score_map, geo_map, ignored_map):
+    def train_step(self, image, score_map, geo_map, roi_mask):
         device = list(self.parameters())[0].device
-        image, score_map, geo_map, ignored_map = (image.to(device), score_map.to(device),
-                                                  geo_map.to(device), ignored_map.to(device))
+        image, score_map, geo_map, roi_mask = (image.to(device), score_map.to(device),
+                                               geo_map.to(device), roi_mask.to(device))
         pred_score_map, pred_geo_map = self.forward(image)
 
         loss, values_dict = self.criterion(score_map, pred_score_map, geo_map, pred_geo_map,
-                                           ignored_map)
+                                           roi_mask)
         extra_info = dict(**values_dict, score_map=pred_score_map, geo_map=pred_geo_map)
 
         return loss, extra_info
